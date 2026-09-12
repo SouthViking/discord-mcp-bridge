@@ -37,7 +37,11 @@ Recommended permissions for the complete current toolset:
 
 GuildSpan does not need Administrator, Manage Server, Manage Roles, Kick Members, Ban Members, or Manage Messages. Discord channel overrides can still deny a permission granted at the server level.
 
-Use the generated install link to add the bot to your server. The person authorizing a server installation must have permission to manage that server. Discord documents the permission model in [OAuth2 and Permissions](https://docs.discord.com/developers/platform/oauth2-and-permissions).
+The hosted `/servers` view generates the official install flow with these
+permissions automatically. For local `stdio`, use the Developer Portal's
+generated install link. The person authorizing a server installation must have
+permission to manage that server. Discord documents the permission model in
+[OAuth2 and Permissions](https://docs.discord.com/developers/platform/oauth2-and-permissions).
 
 ## 4. Copy the server ID
 
@@ -50,7 +54,11 @@ DISCORD_DEFAULT_GUILD_ID=123456789012345678
 DISCORD_ALLOWED_GUILDS=123456789012345678
 ```
 
-The guild allowlist is optional, but recommended. Channel-level access is governed by Discord role and channel permissions. Effective access is always the intersection of Discord permissions and the GuildSpan guild policy.
+The guild allowlist is optional. Keep it empty on a hosted instance intended
+for self-service onboarding; set it when the operator wants to restrict the
+instance. Channel-level access is governed by Discord role and channel
+permissions. Effective access is always the intersection of Discord
+permissions and the GuildSpan guild policy.
 
 ## 5. Verify the connection
 
@@ -76,9 +84,18 @@ service also uses the Discord application as an OAuth identity provider:
 3. Copy the OAuth client secret into `DISCORD_OAUTH_CLIENT_SECRET`. This is not
    the bot token.
 4. Register `https://your-public-host/auth/callback` as an exact redirect URI.
-5. Set `GUILDSPAN_PUBLIC_BASE_URL=https://your-public-host` without `/mcp`.
+5. Register `https://your-public-host/onboarding/callback` as a second exact
+   redirect URI.
+6. On **Installation**, enable server installation for the application and the
+   `bot` scope. Keep the bot public if unrelated server administrators should
+   be able to install it.
+7. Set `GUILDSPAN_PUBLIC_BASE_URL=https://your-public-host` without `/mcp`.
+8. Optionally override `DISCORD_BOT_PERMISSIONS`; the default is
+   `446676716608`, matching the recommended permissions above.
 
 GuildSpan requests only `identify` and `guilds` for the human login. The bot
 continues to make all Discord content and action calls with the centrally
 managed `DISCORD_BOT_TOKEN`; a user's OAuth token is used only for identity,
-guild membership, and bootstrap permission checks.
+guild membership, installation, and bootstrap permission checks. GuildSpan
+verifies the bot is actually present before it stores the server installation
+and first administrator grant.

@@ -127,13 +127,51 @@ Any MCP client
      -> standard MCP OAuth discovery
      -> browser consent and Discord login
 GuildSpan tools
-  -> validates operator allowlist and per-user guild access
+  -> validates optional operator policy and per-user guild access
   -> calls Discord REST API with a bot token
 Discord
   -> returns API response
 ```
 
 The hosted protocol is not coupled to Codex, Claude, Cursor, or another client. A compatible client only needs the remote `/mcp` URL and standard OAuth support.
+
+## Hosted Web Frontend
+
+The hosted service includes a Vue frontend in `web/`. Its production build is
+packaged inside the Python distribution and served from the same origin as MCP
+and OAuth:
+
+- `/` — product landing page and remote MCP address
+- `/servers` — Discord login, server selection, bot installation, and activation
+- `/connecting` — connection-in-progress state
+- `/success` — successful connection state
+- `/error` — recoverable connection-error state
+- OAuth authorization endpoint — branded GuildSpan consent view backed by
+  FastMCP's existing transaction, CSRF, PKCE, cookie, and token controls
+
+For frontend development:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Rebuild the assets consumed by the Python service before packaging or deploying:
+
+```bash
+cd web
+npm ci
+npm run build
+```
+
+The frontend and backend intentionally live in the same repository for the MVP.
+They retain separate dependency and build boundaries, so the frontend can move
+to its own Railway service later without reorganizing the source tree.
+
+All public and consent views support English and Spanish. The navigation bar
+persists the selected language and light, dark, or system appearance. System
+appearance is the default and follows operating-system changes automatically.
 
 ## Plugin development
 
@@ -350,17 +388,20 @@ The application exposes:
 
 `PORT` is accepted as an alternative to `GUILDSPAN_HTTP_PORT`. The default host is `127.0.0.1`, so the development server is not exposed to other machines unless explicitly configured.
 
-For a remote deployment, first add this exact redirect to the Discord application's OAuth2 configuration:
+For a remote deployment, first add both exact redirects to the Discord
+application's OAuth2 configuration:
 
 ```text
 https://your-guildspan-host.example/auth/callback
+https://your-guildspan-host.example/onboarding/callback
 ```
 
 Then configure and migrate the service:
 
 ```env
 DISCORD_BOT_TOKEN=your-centrally-managed-bot-token
-DISCORD_ALLOWED_GUILDS=123456789012345678
+DISCORD_BOT_PERMISSIONS=446676716608
+DISCORD_ALLOWED_GUILDS=
 DATABASE_URL=postgresql://user:password@host:5432/guildspan
 GUILDSPAN_AUTH_ENABLED=true
 GUILDSPAN_PUBLIC_BASE_URL=https://your-guildspan-host.example
@@ -372,23 +413,35 @@ GUILDSPAN_HTTP_HOST=0.0.0.0
 
 Generate `GUILDSPAN_AUTH_SECRET` with a cryptographically secure secret generator; it signs GuildSpan access tokens and derives encryption for persisted OAuth state. Run `.venv/bin/alembic upgrade head` before startup.
 
-Hosted clients discover OAuth 2.1 metadata from the service and perform browser-based authorization with Discord scopes `identify` and `guilds`. The bot token never leaves the service. On a user's first guild-scoped request, GuildSpan requires all of the following:
+Leave `DISCORD_ALLOWED_GUILDS` empty for self-service onboarding, or set a
+comma-separated list to restrict the hosted instance to selected servers.
 
-- The guild is in `DISCORD_ALLOWED_GUILDS`.
+Hosted clients discover OAuth 2.1 metadata from the service and perform
+browser-based authorization with Discord scopes `identify` and `guilds`. The
+bot token never leaves the service. A server owner or user with **Manage
+Server** can also open `/servers`, sign in with Discord, and complete the
+official bot installation flow. GuildSpan verifies the result live before it
+records the installation and initial user grant.
+
+For every guild-scoped request, GuildSpan requires all of the following:
+
+- The optional `DISCORD_ALLOWED_GUILDS` policy permits the guild.
 - The user is currently a member of the guild.
 - The GuildSpan bot is installed and can access the guild.
-- If no grant exists yet, the user owns the guild or has Discord's **Manage Server** permission.
+- The user has an active persisted grant; an owner or user with **Manage
+  Server** may create the first grant through onboarding or first-use
+  bootstrap.
 
-That first eligible request records the installation and user grant. Later
-requests still require current guild membership and the active persisted grant;
+An eligible onboarding activation or first-use request records the installation
+and user grant. Later requests still require current guild membership and the
+active persisted grant;
 GuildSpan verifies that membership with a targeted bot request instead of
 relisting every OAuth guild. The broader OAuth guild list is reserved for
 discovery and first-time bootstrap, cached briefly in-process, and coalesced
 when concurrent requests use the same user token. A short Discord rate limit is
 retried once according to `Retry-After`; longer limits are returned as an
-actionable error instead of blocking the MCP request indefinitely. This
-bootstrap can later be replaced or extended by a management platform without
-changing the MCP/OAuth contract. See [Hosted authentication](docs/hosted-auth.md).
+actionable error instead of blocking the MCP request indefinitely. See
+[Hosted authentication](docs/hosted-auth.md).
 
 ## Persistence
 
@@ -508,15 +561,13 @@ Inputs: none. This tool requires the hosted OAuth runtime.
 
 Current behavior:
 
-- Lists only operator-allowlisted servers that the authenticated Discord user
-  can already access or is eligible to initialize.
-- Returns `authorized` for active persisted grants and
-  `eligible_to_initialize` when the user owns the server or has **Manage
-  Server**, the bot is accessible, and no grant exists yet.
-- Revalidates current Discord membership and bot access without creating a
-  grant or changing Discord.
-- Omits servers outside `DISCORD_ALLOWED_GUILDS`, inaccessible to the bot, or
-  unavailable to the authenticated user.
+- Lists every server visible to the authenticated Discord user with a real
+  onboarding status: `authorized`, `ready_to_activate`,
+  `requires_installation`, `administrator_required`, or `restricted`.
+- Includes the public `/servers` setup URL so a compatible assistant can send
+  the user to web onboarding when installation or activation is required.
+- Revalidates bot access without creating a grant or changing Discord. Only an
+  explicit activation or eligible guild-scoped request persists access.
 
 ### `discord_list_channels`
 

@@ -9,9 +9,17 @@ style sections and uses conventional commits for commit messages.
 
 ### Added
 
-- Hosted `discord_list_guilds` discovery for authorized and bootstrap-eligible
-  Discord servers, filtered by OAuth membership, operator allowlist, persisted
-  grants, bootstrap permissions, and GuildSpan bot access.
+- Branded Vue frontend for the hosted GuildSpan service, including a bilingual
+  English/Spanish landing page, connection states, system-aware light and dark
+  themes, responsive styling, a voluntary-support callout, and custom OAuth
+  consent UI.
+- Packaged web assets and Starlette routes so the frontend ships with the
+  existing Python service without requiring a second deployment for the MVP.
+- Self-service Discord server onboarding with Discord login, real server
+  statuses, official bot installation, CSRF-protected activation, live
+  permission verification, and persisted initial administrator access.
+- Hosted `discord_list_guilds` discovery for every visible Discord server,
+  including setup statuses and a public onboarding URL.
 - Development-ready GuildSpan plugin package for Codex and ChatGPT, including
   the production remote MCP connection, install metadata, brand assets, safe
   Discord workflow guidance, and a local marketplace test plan.
@@ -28,8 +36,11 @@ style sections and uses conventional commits for commit messages.
 ### Changed
 
 - Messages with a configured actor now include a leading visual spacer between Discord's native bot header and the actor label.
-- Access policy is now guild-scoped through `DISCORD_ALLOWED_GUILDS`; channel access is delegated to Discord role and channel permissions.
-- Unauthenticated HTTP can bind only to loopback; public HTTP startup requires explicit hosted-auth configuration and a non-empty guild allowlist.
+- Access policy is guild-scoped through optional `DISCORD_ALLOWED_GUILDS`;
+  leaving it empty enables self-service onboarding, while channel access remains
+  delegated to Discord role and channel permissions.
+- Unauthenticated HTTP can bind only to loopback; public HTTP startup requires
+  explicit hosted-auth configuration.
 
 ### Fixed
 
