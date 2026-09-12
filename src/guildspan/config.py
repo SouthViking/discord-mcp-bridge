@@ -13,6 +13,17 @@ DEFAULT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 DEFAULT_MAX_UPLOAD_TOTAL_BYTES = 24 * 1024 * 1024
 DEFAULT_ATTRIBUTION_TEXT = "sent using GuildSpan"
+DEFAULT_DISCORD_BOT_PERMISSIONS = (
+    (1 << 6)  # Add Reactions
+    | (1 << 10)  # View Channels
+    | (1 << 11)  # Send Messages
+    | (1 << 14)  # Embed Links
+    | (1 << 15)  # Attach Files
+    | (1 << 16)  # Read Message History
+    | (1 << 35)  # Create Public Threads
+    | (1 << 37)  # Use External Stickers
+    | (1 << 38)  # Send Messages in Threads
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +48,11 @@ class Settings(BaseSettings):
     discord_bot_token: str | None = None
     discord_default_guild_id: str | None = None
     discord_allowed_guilds: str | None = None
+    discord_bot_permissions: int = Field(
+        default=DEFAULT_DISCORD_BOT_PERMISSIONS,
+        ge=0,
+        validation_alias="DISCORD_BOT_PERMISSIONS",
+    )
     discord_actor_name: str | None = None
     discord_actor_discord_id: str | None = None
     discord_append_attribution: bool = True
@@ -125,6 +141,12 @@ class Settings(BaseSettings):
 
         return _parse_csv_ids(self.discord_allowed_guilds)
 
+    def allows_guild(self, guild_id: str) -> bool:
+        """Return whether an optional operator allowlist permits one guild."""
+
+        allowed_guild_ids = self.allowed_guild_ids
+        return not allowed_guild_ids or guild_id in allowed_guild_ids
+
     @property
     def allowed_attachment_mime_patterns(self) -> set[str]:
         """Return optional normalized MIME patterns allowed for downloads."""
@@ -212,12 +234,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "GUILDSPAN_AUTH_SECRET must contain at least 32 characters"
             )
-        if not self.allowed_guild_ids:
-            raise ValueError(
-                "DISCORD_ALLOWED_GUILDS must contain at least one guild when hosted "
-                "authentication is enabled"
-            )
-
         _required_setting(self.discord_bot_token, "DISCORD_BOT_TOKEN")
         self.require_database_url()
         return HostedAuthSettings(

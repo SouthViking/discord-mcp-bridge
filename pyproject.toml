@@ -27,6 +27,7 @@ classifiers = [
 ]
 dependencies = [
   "alembic>=1.14.0,<2.0.0",
+  "cryptography>=44.0.0,<51.0.0",
   "fastmcp>=3.4.4,<4.0.0",
   "httpx>=0.28.0",
   "psycopg[binary]>=3.2.0,<4.0.0",
@@ -66,6 +67,7 @@ path = "src/guildspan/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/guildspan"]
+artifacts = ["src/guildspan/web_dist/**"]
 
 [tool.pytest.ini_options]
 addopts = "-q --strict-config --strict-markers"

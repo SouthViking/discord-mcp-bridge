@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 from fastmcp.server.auth import AccessToken
 
-from guildspan.authorization import DiscordGuildAccess
+from guildspan.authorization import DiscordGuildOnboarding
 from guildspan.errors import DiscordConfigurationError
 from guildspan.tools import guilds as guilds_module
 
@@ -13,27 +13,30 @@ from guildspan.tools import guilds as guilds_module
 class FakeAuthorizationService:
     def __init__(self) -> None:
         self.tokens: list[AccessToken] = []
+        self.public_base_url = "https://guildspan.example.com"
 
-    async def list_available_guilds(
+    async def list_onboarding_guilds_for_token(
         self,
         *,
         token: AccessToken,
-    ) -> list[DiscordGuildAccess]:
+    ) -> list[DiscordGuildOnboarding]:
         self.tokens.append(token)
         return [
-            DiscordGuildAccess(
+            DiscordGuildOnboarding(
                 id="guild-1",
                 name="Guild One",
                 icon_url="https://example.com/icon.png",
                 owner=True,
                 status="authorized",
+                bot_accessible=True,
             ),
-            DiscordGuildAccess(
+            DiscordGuildOnboarding(
                 id="guild-2",
                 name="Guild Two",
                 icon_url=None,
                 owner=False,
-                status="eligible_to_initialize",
+                status="administrator_required",
+                bot_accessible=False,
             ),
         ]
 
@@ -65,6 +68,7 @@ async def test_discord_list_guilds_returns_safe_authorization_states(
     assert result == {
         "status": "ok",
         "count": 2,
+        "setup_url": "https://guildspan.example.com/servers",
         "guilds": [
             {
                 "id": "guild-1",
@@ -79,8 +83,8 @@ async def test_discord_list_guilds_returns_safe_authorization_states(
                 "name": "Guild Two",
                 "icon_url": None,
                 "owner": False,
-                "authorization_status": "eligible_to_initialize",
-                "bot_accessible": True,
+                "authorization_status": "administrator_required",
+                "bot_accessible": False,
             },
         ],
     }

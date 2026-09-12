@@ -65,6 +65,27 @@ class DiscordGuildAccess:
     status: Literal["authorized", "eligible_to_initialize"]
 
 
+GuildOnboardingStatus = Literal[
+    "authorized",
+    "ready_to_activate",
+    "requires_installation",
+    "administrator_required",
+    "restricted",
+]
+
+
+@dataclass(frozen=True)
+class DiscordGuildOnboarding:
+    """One Discord guild and its current GuildSpan onboarding state."""
+
+    id: str
+    name: str
+    icon_url: str | None
+    owner: bool
+    status: GuildOnboardingStatus
+    bot_accessible: bool
+
+
 @dataclass(frozen=True)
 class _GuildCacheEntry:
     """Short-lived Discord OAuth guild discovery result."""
@@ -323,6 +344,16 @@ class GuildAuthorizationService:
         self._identity_client = identity_client
         self._bot_verifier = bot_verifier
 
+    @property
+    def public_base_url(self) -> str | None:
+        """Return the configured public origin for user-facing setup links."""
+
+        return (
+            self._settings.public_base_url.rstrip("/")
+            if self._settings.public_base_url
+            else None
+        )
+
     async def list_available_guilds(
         self,
         *,
@@ -337,7 +368,7 @@ class GuildAuthorizationService:
         allowed_guilds = {
             guild.id: guild
             for guild in visible_guilds
-            if guild.id in self._settings.allowed_guild_ids
+            if self._settings.allows_guild(guild.id)
         }
 
         async with self._database.session() as session:
@@ -374,10 +405,139 @@ class GuildAuthorizationService:
             key=lambda guild: (guild.name.casefold(), guild.id),
         )
 
+    async def list_onboarding_guilds(
+        self,
+        *,
+        access_token: str,
+        discord_user_id: str,
+    ) -> list[DiscordGuildOnboarding]:
+        """List every visible guild with a non-mutating onboarding status."""
+
+        visible_guilds = await self._identity_client.list_guilds(
+            access_token=access_token,
+        )
+        async with self._database.session() as session:
+            user = await UserRepository(session).get_by_discord_id(discord_user_id)
+            authorized_guild_ids = (
+                set(await GuildAccessRepository(session).list_active_guild_ids(user.id))
+                if user is not None and user.is_active
+                else set()
+            )
+
+        guilds: list[DiscordGuildOnboarding] = []
+        for guild in visible_guilds:
+            if not self._settings.allows_guild(guild.id):
+                guilds.append(
+                    DiscordGuildOnboarding(
+                        id=guild.id,
+                        name=guild.name,
+                        icon_url=guild.icon_url,
+                        owner=guild.owner,
+                        status="restricted",
+                        bot_accessible=False,
+                    )
+                )
+                continue
+
+            is_authorized = guild.id in authorized_guild_ids
+            if not is_authorized and not guild.can_bootstrap_access:
+                guilds.append(
+                    DiscordGuildOnboarding(
+                        id=guild.id,
+                        name=guild.name,
+                        icon_url=guild.icon_url,
+                        owner=guild.owner,
+                        status="administrator_required",
+                        bot_accessible=False,
+                    )
+                )
+                continue
+
+            bot_accessible = True
+            try:
+                await self._bot_verifier.verify(guild.id)
+            except (DiscordApiError, DiscordPermissionError):
+                bot_accessible = False
+
+            status: GuildOnboardingStatus
+            if is_authorized and bot_accessible:
+                status = "authorized"
+            elif guild.can_bootstrap_access and bot_accessible:
+                status = "ready_to_activate"
+            elif guild.can_bootstrap_access:
+                status = "requires_installation"
+            else:
+                status = "administrator_required"
+
+            guilds.append(
+                DiscordGuildOnboarding(
+                    id=guild.id,
+                    name=guild.name,
+                    icon_url=guild.icon_url,
+                    owner=guild.owner,
+                    status=status,
+                    bot_accessible=bot_accessible,
+                )
+            )
+
+        return sorted(guilds, key=lambda guild: (guild.name.casefold(), guild.id))
+
+    async def list_onboarding_guilds_for_token(
+        self,
+        *,
+        token: AccessToken,
+    ) -> list[DiscordGuildOnboarding]:
+        """List onboarding states for one authenticated MCP access token."""
+
+        return await self.list_onboarding_guilds(
+            access_token=token.token,
+            discord_user_id=_discord_user_id(token),
+        )
+
+    async def record_user(self, profile: DiscordProfile) -> None:
+        """Create or refresh the local user linked to one Discord identity."""
+
+        async with self._database.session() as session:
+            await UserRepository(session).upsert(**profile)
+
+    async def bootstrap_onboarding_guild(
+        self,
+        *,
+        guild_id: str,
+        access_token: str,
+        profile: DiscordProfile,
+    ) -> DiscordOAuthGuild:
+        """Verify an administrator and persist one web onboarding selection."""
+
+        if not self._settings.allows_guild(guild_id):
+            raise DiscordPermissionError(
+                f"Guild {guild_id} is restricted by DISCORD_ALLOWED_GUILDS."
+            )
+        guild = await self._identity_client.get_guild(
+            access_token=access_token,
+            guild_id=guild_id,
+        )
+        if guild is None:
+            raise DiscordPermissionError(
+                f"The authenticated Discord user is not a member of guild {guild_id}."
+            )
+        if not guild.can_bootstrap_access:
+            raise DiscordPermissionError(
+                "A Discord owner or member with Manage Server must connect GuildSpan."
+            )
+
+        await self._bot_verifier.verify(guild_id)
+        await self._persist_bootstrap(
+            guild=guild,
+            profile=profile,
+            source="web_onboarding",
+        )
+        return guild
+
     async def authorize(self, *, guild_id: str, token: AccessToken) -> None:
         """Authorize one request, bootstrapping an eligible guild when needed."""
 
-        if guild_id not in self._settings.allowed_guild_ids:
+        if not self._settings.allows_guild(guild_id):
             raise DiscordPermissionError(
                 f"Guild {guild_id} is not in DISCORD_ALLOWED_GUILDS."
             )
@@ -419,6 +579,19 @@ class GuildAuthorizationService:
 
         await self._bot_verifier.verify(guild_id)
 
+        await self._persist_bootstrap(
+            guild=guild,
+            profile=profile,
+            source="discord_oauth_bootstrap",
+        )
+
+    async def _persist_bootstrap(
+        self,
+        *,
+        guild: DiscordOAuthGuild,
+        profile: DiscordProfile,
+        source: str,
+    ) -> None:
         async with self._database.session() as session:
             user = await UserRepository(session).upsert(**profile)
             installation = await GuildInstallationRepository(session).install(
@@ -427,7 +600,7 @@ class GuildAuthorizationService:
                 icon_url=guild.icon_url,
                 installed_by_user_id=user.id,
                 metadata={
-                    "source": "discord_oauth_bootstrap",
+                    "source": source,
                     "owner": guild.owner,
                     "permissions": str(guild.permissions),
                 },

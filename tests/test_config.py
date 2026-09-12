@@ -2,7 +2,7 @@ from typing import Any, cast
 
 import pytest
 
-from guildspan.config import Settings, load_settings
+from guildspan.config import DEFAULT_DISCORD_BOT_PERMISSIONS, Settings, load_settings
 
 
 def make_settings(**kwargs: object) -> Settings:
@@ -14,6 +14,7 @@ def test_settings_can_be_constructed_without_discord_token() -> None:
     settings = make_settings()
 
     assert settings.discord_bot_token is None
+    assert settings.discord_bot_permissions == DEFAULT_DISCORD_BOT_PERMISSIONS
     assert settings.discord_append_attribution is True
     assert settings.discord_attribution_text == "sent using GuildSpan"
     assert settings.discord_max_attachment_bytes == 10 * 1024 * 1024
@@ -98,7 +99,7 @@ def test_hosted_auth_settings_require_complete_secure_configuration() -> None:
     assert auth.auth_secret == "x" * 32
 
 
-def test_hosted_auth_requires_allowlist_and_https() -> None:
+def test_hosted_auth_requires_https_but_not_an_operator_allowlist() -> None:
     base = {
         "discord_bot_token": "bot-token",
         "DATABASE_URL": "postgresql://user:pass@db/guildspan",
@@ -113,11 +114,25 @@ def test_hosted_auth_requires_allowlist_and_https() -> None:
             discord_allowed_guilds="guild-1",
         ).require_hosted_auth_settings()
 
-    with pytest.raises(ValueError, match="DISCORD_ALLOWED_GUILDS"):
-        make_settings(
-            **base,
-            GUILDSPAN_PUBLIC_BASE_URL="https://guildspan.example.com",
-        ).require_hosted_auth_settings()
+    auth = make_settings(
+        **base,
+        GUILDSPAN_PUBLIC_BASE_URL="https://guildspan.example.com",
+    ).require_hosted_auth_settings()
+
+    assert auth.public_base_url == "https://guildspan.example.com"
+
+
+def test_optional_guild_allowlist_and_bot_permissions_are_parsed() -> None:
+    unrestricted = make_settings()
+    restricted = make_settings(
+        discord_allowed_guilds="123,456",
+        DISCORD_BOT_PERMISSIONS=1024,
+    )
+
+    assert unrestricted.allows_guild("any-guild") is True
+    assert restricted.allows_guild("123") is True
+    assert restricted.allows_guild("789") is False
+    assert restricted.discord_bot_permissions == 1024
 
 
 def test_blank_default_guild_id_is_normalized_to_none() -> None:

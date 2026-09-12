@@ -14,6 +14,7 @@ from guildspan import __version__
 from guildspan.config import Settings, load_settings
 from guildspan.hosted import HostedRuntime, create_hosted_runtime
 from guildspan.server import create_server
+from guildspan.web_frontend import create_frontend_routes
 
 
 async def health_check(_request: Request) -> JSONResponse:
@@ -36,9 +37,15 @@ def create_http_app(
     """Create the Streamable HTTP MCP application."""
 
     resolved_settings = settings or load_settings()
+    onboarding = None
     if resolved_settings.auth_enabled:
         runtime = hosted_runtime or create_hosted_runtime(resolved_settings)
-        server = create_server(auth=runtime.auth, lifespan=runtime.lifespan)
+        onboarding = runtime.onboarding
+        server = create_server(
+            auth=runtime.auth,
+            lifespan=runtime.lifespan,
+            public_base_url=resolved_settings.public_base_url,
+        )
     else:
         if resolved_settings.http_host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError(
@@ -56,6 +63,7 @@ def create_http_app(
         0,
         Route("/health", endpoint=health_check, methods=["GET"]),
     )
+    app.router.routes.extend(create_frontend_routes(onboarding=onboarding))
     return cast(Starlette, app)
 
 

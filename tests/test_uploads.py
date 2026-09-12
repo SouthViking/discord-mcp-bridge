@@ -101,7 +101,10 @@ async def test_resolve_path_attachment_rejects_symlink_escape(tmp_path: Path) ->
     outside_file = tmp_path / "outside.txt"
     outside_file.write_text("outside")
     link = allowed_root / "link.txt"
-    link.symlink_to(outside_file)
+    try:
+        link.symlink_to(outside_file)
+    except OSError as error:
+        pytest.skip(f"Symbolic links are unavailable in this environment: {error}")
 
     with pytest.raises(DiscordPermissionError, match="outside"):
         await resolve_outgoing_attachments(
@@ -111,10 +114,14 @@ async def test_resolve_path_attachment_rejects_symlink_escape(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_resolve_path_attachment_rejects_invalid_configured_root() -> None:
+async def test_resolve_path_attachment_rejects_invalid_configured_root(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(DiscordConfigurationError, match="absolute paths"):
         await resolve_outgoing_attachments(
-            attachments=[PathAttachment(source_type="path", path="/tmp/file.txt")],
+            attachments=[
+                PathAttachment(source_type="path", path=str(tmp_path / "file.txt"))
+            ],
             settings=make_settings(discord_allowed_upload_paths="relative-root"),
         )
 

@@ -15,6 +15,7 @@ from guildspan.authorization import (
     DiscordIdentityClient,
     DiscordIdentityClientProtocol,
     DiscordOAuthGuild,
+    DiscordProfile,
     GuildAuthorizationService,
 )
 from guildspan.config import Settings
@@ -352,6 +353,143 @@ async def test_list_available_guilds_returns_only_authorized_or_eligible() -> No
             assert await GuildAccessRepository(session).list_active_guild_ids(
                 stored_user.id
             ) == ["guild-authorized"]
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_onboarding_lists_real_server_states_without_mutating_access() -> None:
+    database = await create_test_database()
+    identity = FakeIdentityClient(
+        None,
+        guilds=[
+            DiscordOAuthGuild(
+                id="guild-authorized",
+                name="Authorized",
+                icon_url=None,
+                owner=False,
+                permissions=0,
+            ),
+            DiscordOAuthGuild(
+                id="guild-ready",
+                name="Ready",
+                icon_url=None,
+                owner=True,
+                permissions=0,
+            ),
+            DiscordOAuthGuild(
+                id="guild-install",
+                name="Install",
+                icon_url=None,
+                owner=False,
+                permissions=MANAGE_GUILD_PERMISSION,
+            ),
+            DiscordOAuthGuild(
+                id="guild-member",
+                name="Member",
+                icon_url=None,
+                owner=False,
+                permissions=0,
+            ),
+            DiscordOAuthGuild(
+                id="guild-restricted",
+                name="Restricted",
+                icon_url=None,
+                owner=True,
+                permissions=0,
+            ),
+        ],
+    )
+    verifier = FakeBotVerifier(inaccessible={"guild-install"})
+    service = GuildAuthorizationService(
+        settings=make_settings(
+            discord_allowed_guilds=(
+                "guild-authorized,guild-ready,guild-install,guild-member"
+            )
+        ),
+        database=database,
+        identity_client=identity,
+        bot_verifier=verifier,
+    )
+
+    try:
+        async with database.session() as session:
+            user = await UserRepository(session).upsert(discord_user_id="user-1")
+            installation = await GuildInstallationRepository(session).install(
+                discord_guild_id="guild-authorized",
+                name="Authorized",
+                installed_by_user_id=user.id,
+            )
+            await GuildAccessRepository(session).grant(
+                user_id=user.id,
+                guild_installation_id=installation.id,
+            )
+
+        guilds = await service.list_onboarding_guilds(
+            access_token="discord-user-token",
+            discord_user_id="user-1",
+        )
+
+        assert [(guild.id, guild.status) for guild in guilds] == [
+            ("guild-authorized", "authorized"),
+            ("guild-install", "requires_installation"),
+            ("guild-member", "administrator_required"),
+            ("guild-ready", "ready_to_activate"),
+            ("guild-restricted", "restricted"),
+        ]
+        assert verifier.calls == [
+            "guild-authorized",
+            "guild-ready",
+            "guild-install",
+        ]
+        async with database.session() as session:
+            stored_user = await UserRepository(session).get_by_discord_id("user-1")
+            assert stored_user is not None
+            assert await GuildAccessRepository(session).list_active_guild_ids(
+                stored_user.id
+            ) == ["guild-authorized"]
+    finally:
+        await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_empty_operator_allowlist_allows_web_onboarding() -> None:
+    database = await create_test_database()
+    guild = DiscordOAuthGuild(
+        id="guild-public",
+        name="Public Guild",
+        icon_url=None,
+        owner=True,
+        permissions=0,
+    )
+    service = GuildAuthorizationService(
+        settings=make_settings(discord_allowed_guilds=None),
+        database=database,
+        identity_client=FakeIdentityClient(guild),
+        bot_verifier=FakeBotVerifier(),
+    )
+    profile: DiscordProfile = {
+        "discord_user_id": "user-1",
+        "username": "ada",
+        "display_name": "Ada",
+        "avatar_url": None,
+    }
+
+    try:
+        selected = await service.bootstrap_onboarding_guild(
+            guild_id="guild-public",
+            access_token="discord-user-token",
+            profile=profile,
+        )
+
+        assert selected == guild
+        async with database.session() as session:
+            user = await UserRepository(session).get_by_discord_id("user-1")
+            assert user is not None
+            assert await GuildAccessRepository(session).has_access(
+                user_id=user.id,
+                discord_guild_id="guild-public",
+            )
     finally:
         await database.dispose()
 

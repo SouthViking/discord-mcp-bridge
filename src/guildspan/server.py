@@ -9,7 +9,7 @@ from typing import Any
 from fastmcp import FastMCP
 from fastmcp.server.auth import AuthProvider
 from fastmcp.server.server import LifespanCallable
-from mcp.types import ToolAnnotations
+from mcp.types import Icon, ToolAnnotations
 
 from guildspan import __version__
 from guildspan.tools.attachments import discord_download_attachment
@@ -98,9 +98,9 @@ TOOL_REGISTRATIONS = (
         title="List available Discord servers",
         description=(
             "Use this at the start of a hosted GuildSpan session to discover Discord "
-            "servers the authenticated user can already access or is eligible to "
-            "initialize. It returns only operator-allowlisted servers accessible to "
-            "the GuildSpan bot, and it does not grant access or change Discord."
+            "servers the authenticated user can access, activate, or ask an "
+            "administrator to connect. Results include bot-installation status and "
+            "a setup page when action is needed; listing does not change Discord."
         ),
         annotations=READ_ONLY_TOOL,
     ),
@@ -246,14 +246,28 @@ def create_server(
     *,
     auth: AuthProvider | None = None,
     lifespan: LifespanCallable[dict[str, Any]] | None = None,
+    public_base_url: str | None = None,
 ) -> FastMCP:
     """Create and configure the GuildSpan server."""
 
+    website_url = public_base_url or GUILDSPAN_WEBSITE_URL
+    icons = (
+        [
+            Icon(
+                src=f"{public_base_url.rstrip('/')}/brand/icon.png",
+                mimeType="image/png",
+                sizes=["512x512"],
+            )
+        ]
+        if public_base_url
+        else None
+    )
     mcp = FastMCP(
         "GuildSpan",
         instructions=GUILDSPAN_INSTRUCTIONS,
         version=__version__,
-        website_url=GUILDSPAN_WEBSITE_URL,
+        website_url=website_url,
+        icons=icons,
         auth=auth,
         lifespan=lifespan,
     )

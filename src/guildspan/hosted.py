@@ -20,7 +20,12 @@ from guildspan.authorization import (
     create_oauth_http_client,
 )
 from guildspan.config import Settings
+from guildspan.onboarding import OnboardingController
 from guildspan.persistence import Database
+from guildspan.web_frontend import (
+    GUILDSPAN_CONSENT_CSP,
+    install_fastmcp_consent_renderer,
+)
 
 OAUTH_STATE_TABLE = "oauth_state"
 OAUTH_STORAGE_SALT = "guildspan-mcp-oauth-state-v1"
@@ -35,10 +40,12 @@ class HostedRuntime:
         auth: AuthProvider,
         database: Database,
         authorization_service: GuildAuthorizationService,
+        onboarding: OnboardingController,
         http_client: httpx.AsyncClient,
         managed_oauth_store: PostgreSQLStore | None,
     ) -> None:
         self.auth = auth
+        self.onboarding = onboarding
         self._database = database
         self._authorization_service = authorization_service
         self._http_client = http_client
@@ -96,6 +103,7 @@ def create_hosted_runtime(
         source_material=auth_settings.auth_secret,
         salt=OAUTH_STORAGE_SALT,
     )
+    install_fastmcp_consent_renderer()
     auth = DiscordProvider(
         client_id=auth_settings.discord_client_id,
         client_secret=auth_settings.discord_client_secret,
@@ -104,6 +112,7 @@ def create_hosted_runtime(
         client_storage=encrypted_storage,
         jwt_signing_key=auth_settings.auth_secret,
         require_authorization_consent=True,
+        consent_csp_policy=GUILDSPAN_CONSENT_CSP,
         http_client=resolved_http_client,
         enable_cimd=True,
     )
@@ -112,10 +121,17 @@ def create_hosted_runtime(
         database=resolved_database,
         http_client=resolved_http_client,
     )
+    onboarding = OnboardingController(
+        settings=settings,
+        auth_settings=auth_settings,
+        authorization_service=authorization_service,
+        http_client=resolved_http_client,
+    )
     return HostedRuntime(
         auth=auth,
         database=resolved_database,
         authorization_service=authorization_service,
+        onboarding=onboarding,
         http_client=resolved_http_client,
         managed_oauth_store=managed_oauth_store,
     )

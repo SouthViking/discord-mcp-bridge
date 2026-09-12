@@ -129,8 +129,8 @@ async def test_create_server_registers_discord_send_message_tool() -> None:
 
     guilds_tool = next(tool for tool in tools if tool.name == "discord_list_guilds")
     assert guilds_tool.description is not None
-    assert "operator-allowlisted" in guilds_tool.description
-    assert "does not grant access" in guilds_tool.description
+    assert "setup page" in guilds_tool.description
+    assert "listing does not change Discord" in guilds_tool.description
 
 
 @pytest.mark.asyncio
